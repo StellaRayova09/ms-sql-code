@@ -1,0 +1,142 @@
+/*
+      
+Functionality    : DDNVALUES FINAL SAVE (MAKER & CHECKER)      
+      
+VER NO    CHANGE BY              CHANGE DATE       REVIEW BY        REVIEW DATE      CHANGE DESC      BEGIN TRAN ROLLBACK TRAN
+ V1        STELLA                24-FEB-2024                                         INITIAL VERSION
+      
+Excution Method  :  
+     
+EXEC DBO.#PR_INS_DDNVALUES_FINAL @IP_FUND="533",@IP_DDN_TYPE="AVG_MONTHLY_INCOME",@IP_DDN_CODE="10",@IP_USERID="91154"
+     
+*/      
+      
+ALTER PROCEDURE DBO.#PR_INS_DDNVALUES_FINAL     
+(  
+@IP_FUND VARCHAR(5),      
+@IP_DDN_TYPE VARCHAR(50),
+@IP_DDN_CODE VARCHAR(50),
+@IP_USERID VARCHAR(50)
+)
+
+AS
+BEGIN      
+        
+SET NOCOUNT ON;  
+
+DECLARE
+@LV_CRDT DATETIME=GETDATE() ,
+ @LV_MAX_NO INT      
+    
+BEGIN TRY
+--BEGIN TRAN DDNFINAL
+
+UPDATE DDNVALUES_STAGING SET DDN_CHECKERBY=@IP_USERID ,DDN_CHECKERDT=@LV_CRDT ,DDN_STATUSFLAG='Y'
+WHERE DDN_FUND=@IP_FUND
+AND DDN_TYPE=@IP_DDN_TYPE
+AND DDN_CODE=@IP_DDN_CODE
+AND DDN_STATUSFLAG='N'
+AND AUD_ACTIVE='Y'
+
+SELECT * INTO #TAB_DDN_MASTER FROM DDNVALUES WITH(NOLOCK) WHERE DDN_FUND=@IP_FUND AND DDN_TYPE=@IP_DDN_TYPE AND DDN_CODE=@IP_DDN_CODE
+
+SELECT SNO=IDENTITY(INT,1,1),DDN_TYPE,DDN_CODE,DDN_DESCRIPTION,DDN_REMARKS,DDN_FUND,DDN_STATUSFLAG,AUD_ACTIVE INTO #TAB_DDN_STAGING FROM DDNVALUES_STAGING WHERE DDN_FUND=@IP_FUND AND DDN_TYPE=@IP_DDN_TYPE AND DDN_CODE=@IP_DDN_CODE
+
+SELECT @LV_MAX_NO=(SELECT MAX(ORDERID)FROM #TAB_DDN_MASTER WITH(NOLOCK))
+
+INSERT INTO DDNVALUES
+(
+DDN_TYPE
+,DDN_CODE
+,DDN_DESCRIPTION
+,ORDERID
+,DDN_FUND
+,DDN_REMARKS
+,RECORD_TYPE
+,INPUTTED_BY
+,INPUT_DATETIME
+,AUTHORIZED_BY
+,AUTHORIZATION_DATETIME
+)
+
+SELECT
+ DDNS.DDN_TYPE
+,DDNS.DDN_CODE
+,DDNS.DDN_DESCRIPTION
+,(CASE WHEN DDN.ORDERID>0 THEN (@LV_MAX_NO + DDNS.SNO) ELSE 1 END) AS ORDERID
+,DDNS.DDN_FUND
+,DDNS.DDN_REMARKS
+,'L' AS RECORD_TYPE
+,@IP_USERID AS INPUTTED_BY
+,@LV_CRDT AS INPUT_DATETIME
+,@IP_USERID AS AUTHORIZED_BY
+,@LV_CRDT AS AUD_CREATE_DT
+
+FROM #TAB_DDN_STAGING DDNS WITH(NOLOCK) LEFT JOIN #TAB_DDN_MASTER DDN WITH(NOLOCK)
+ON DDNS.DDN_FUND=@IP_FUND
+AND DDNS.DDN_TYPE=@IP_DDN_TYPE
+AND DDNS.DDN_CODE=@IP_DDN_CODE
+AND DDNS.DDN_STATUSFLAG='Y'
+AND DDNS.AUD_ACTIVE ='Y'
+
+/***************************************** HISTORY TRANSFER START ******************************************************/
+BEGIN
+INSERT INTO DDNVALUES_HISTORY
+(
+DDN_ID
+,DDN_FUND
+,DDN_TYPE
+,DDN_CODE
+,DDN_DESCRIPTION
+,DDN_REMARKS
+,DDN_STATUSFLAG
+,AUD_CREATE_BY
+,AUD_CREATE_DT
+,AUD_ACTIVE
+,AUD_HOST
+)
+SELECT DDN_ID
+,DDN_FUND
+,DDN_TYPE
+,DDN_CODE
+,DDN_DESCRIPTION
+,DDN_REMARKS
+,DDN_STATUSFLAG
+,AUD_CREATE_BY
+,AUD_CREATE_DT
+,AUD_ACTIVE
+,AUD_HOST
+FROM DDNVALUES_STAGING
+WHERE DDN_FUND=@IP_FUND
+AND DDN_TYPE=@IP_DDN_TYPE
+AND DDN_CODE=@IP_DDN_CODE
+AND AUD_ACTIVE <>'Y'
+
+
+DELETE FROM DDNVALUES_STAGING 
+WHERE DDN_FUND=@IP_FUND
+AND DDN_TYPE=@IP_DDN_TYPE
+AND DDN_CODE=@IP_DDN_CODE
+AND AUD_ACTIVE <>'Y'
+
+END
+/***************************************** HISTORY TRANSFER END ******************************************************/
+
+--COMMIT TRAN DDNFINAL     
+      
+SELECT 0 AS Status_Code,'SUCCESS' AS Status_Msg
+END TRY                                                                                            
+  BEGIN CATCH                                                                                     
+  -- ROLLBACK TRAN DDNFINAL      
+       SELECT '1' Status_Code,                                    
+              'FAILURE' Status_Msg,                                                                                   
+              ERROR_NUMBER() AS ErrorNumber,                                                  
+              ERROR_SEVERITY() AS ErrorSeverity,               
+              ERROR_STATE() AS ErrorState,                                                                                      
+              ERROR_PROCEDURE() AS ErrorProcedure,                 
+              ERROR_LINE() AS ErrorLine,                                                                            
+            ERROR_MESSAGE() AS ErrorMessage;                                                                                      
+      END CATCH      
+       
+       
+END
